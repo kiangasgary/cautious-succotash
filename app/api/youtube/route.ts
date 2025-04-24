@@ -36,63 +36,31 @@ function extractVideoId(urlOrId: string): string {
   }
 }
 
-async function getTranscriptUsingYoutubeAPI(videoId: string): Promise<string> {
-  const youtube = google.youtube('v3');
-  const apiKey = process.env.YOUTUBE_API_KEY;
-
-  if (!apiKey) {
-    throw new Error('YouTube API key is not configured');
-  }
-
-  try {
-    // First, get the caption tracks
-    const captions = await youtube.captions.list({
-      key: apiKey,
-      part: ['snippet'],
-      videoId: videoId
-    });
-
-    if (!captions.data.items || captions.data.items.length === 0) {
-      throw new Error('No captions available');
-    }
-
-    // Get the first available caption track (usually the auto-generated one)
-    const captionId = captions.data.items[0].id;
-
-    // Download the caption track
-    const captionTrack = await youtube.captions.download({
-      key: apiKey,
-      id: captionId!
-    });
-
-    // Convert the caption track to plain text
-    const transcript = (captionTrack.data as any).toString();
-    return transcript;
-  } catch (error) {
-    console.error('Error fetching transcript using YouTube API:', error);
-    throw error;
-  }
-}
-
 async function getVideoTranscript(videoId: string): Promise<string> {
   console.log('Fetching transcript for video ID:', videoId);
 
-  // Try using youtube-transcript package first
   try {
     const transcriptItems = await YoutubeTranscript.fetchTranscript(videoId);
-    if (transcriptItems && transcriptItems.length > 0) {
-      return transcriptItems.map(item => item.text).join(' ');
+    if (!transcriptItems || transcriptItems.length === 0) {
+      throw new Error('No transcript available for this video');
     }
-  } catch (error) {
-    console.log('youtube-transcript failed, trying YouTube API:', error);
-  }
-
-  // If youtube-transcript fails, try using YouTube API
-  try {
-    return await getTranscriptUsingYoutubeAPI(videoId);
-  } catch (error) {
-    console.error('Both transcript fetching methods failed:', error);
-    throw new Error('Could not fetch video transcript. The video might have disabled transcripts or requires authentication.');
+    return transcriptItems.map(item => item.text).join(' ');
+  } catch (error: any) {
+    console.error('Error fetching transcript:', error);
+    
+    // Handle specific error types
+    if (error.message?.includes('Transcript is disabled')) {
+      throw new Error('This video does not have captions enabled. Please try a different video that has captions.');
+    }
+    if (error.message?.includes('Video is unavailable')) {
+      throw new Error('This video is unavailable or private. Please make sure the video is public and accessible.');
+    }
+    if (error.message?.includes('ERR_NETWORK')) {
+      throw new Error('Network error while fetching transcript. Please check your internet connection and try again.');
+    }
+    
+    // If it's a different error, provide a more helpful message
+    throw new Error(`Could not fetch video transcript. Reason: ${error.message || 'Unknown error'}`);
   }
 }
 
@@ -109,6 +77,7 @@ export async function GET(request: Request) {
     }
 
     const videoId = extractVideoId(videoUrl);
+    console.log('Processing video ID:', videoId);
     
     // Get video details using YouTube API
     const youtube = google.youtube('v3');
@@ -121,31 +90,53 @@ export async function GET(request: Request) {
       );
     }
 
-    const videoResponse = await youtube.videos.list({
-      key: apiKey,
-      part: ['snippet'],
-      id: [videoId]
-    });
+    // First get video details
+    let videoTitle: string;
+    try {
+      const videoResponse = await youtube.videos.list({
+        key: apiKey,
+        part: ['snippet'],
+        id: [videoId]
+      });
 
-    if (!videoResponse.data.items || videoResponse.data.items.length === 0) {
+      if (!videoResponse.data.items || videoResponse.data.items.length === 0) {
+        return NextResponse.json(
+          { error: 'Video not found or is private. Please make sure the video exists and is public.' },
+          { status: 404 }
+        );
+      }
+
+      videoTitle = videoResponse.data.items[0].snippet?.title || `Video ${videoId}`;
+      console.log('Found video:', videoTitle);
+    } catch (error) {
+      console.error('Error fetching video details:', error);
       return NextResponse.json(
-        { error: 'Video not found' },
-        { status: 404 }
+        { error: 'Failed to fetch video details from YouTube. Please check if the video URL is correct.' },
+        { status: 500 }
       );
     }
 
-    const videoTitle = videoResponse.data.items[0].snippet?.title || `Video ${videoId}`;
-    const transcript = await getVideoTranscript(videoId);
+    // Then get transcript
+    try {
+      const transcript = await getVideoTranscript(videoId);
+      console.log('Successfully fetched transcript');
 
-    return NextResponse.json({
-      title: videoTitle,
-      transcript,
-      videoId
-    });
+      return NextResponse.json({
+        title: videoTitle,
+        transcript,
+        videoId
+      });
+    } catch (error: any) {
+      console.error('Transcript error:', error.message);
+      return NextResponse.json(
+        { error: error.message || 'Failed to fetch video transcript' },
+        { status: 400 }
+      );
+    }
   } catch (error) {
     console.error('Error in YouTube API route:', error);
     return NextResponse.json(
-      { error: error instanceof Error ? error.message : 'Failed to fetch video details' },
+      { error: error instanceof Error ? error.message : 'Failed to process request' },
       { status: 500 }
     );
   }

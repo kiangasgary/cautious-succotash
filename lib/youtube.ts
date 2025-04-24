@@ -102,14 +102,16 @@ export async function getVideoDetails(urlOrId: string): Promise<VideoDetails> {
   try {
     // Call our server-side API route instead
     const response = await fetch(`/api/youtube?videoUrl=${encodeURIComponent(urlOrId)}`);
-    
-    if (!response.ok) {
-      const error = await response.json();
-      throw new Error(error.error || 'Failed to fetch video details');
-    }
-
     const data = await response.json();
     
+    if (!response.ok) {
+      throw new Error(data.error || 'Failed to fetch video details');
+    }
+    
+    if (!data.title || !data.transcript) {
+      throw new Error('Invalid response format from server');
+    }
+
     return {
       title: data.title,
       transcript: data.transcript,

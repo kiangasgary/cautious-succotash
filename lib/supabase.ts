@@ -2,7 +2,7 @@ import { createClient } from "@supabase/supabase-js"
 import type { Database } from '@/types/supabase'
 
 // For client components (singleton pattern)
-let clientSupabaseClient: ReturnType<typeof createClient> | null = null
+let clientSupabaseClient: ReturnType<typeof createClient<Database>> | null = null
 
 export const createClientSupabaseClient = () => {
   if (clientSupabaseClient) return clientSupabaseClient
