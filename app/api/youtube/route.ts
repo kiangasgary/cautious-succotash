@@ -70,6 +70,7 @@ export async function GET(request: Request) {
     const videoUrl = searchParams.get('videoUrl');
 
     if (!videoUrl) {
+      console.error('No video URL provided');
       return NextResponse.json(
         { error: 'Video URL is required' },
         { status: 400 }
@@ -81,14 +82,17 @@ export async function GET(request: Request) {
     
     // Get video details using YouTube API
     const youtube = google.youtube('v3');
-    const apiKey = process.env.YOUTUBE_API_KEY;
+    const apiKey = process.env.YOUTUBE_API_KEY?.trim(); // Trim any whitespace
 
     if (!apiKey) {
+      console.error('YouTube API key is missing');
       return NextResponse.json(
         { error: 'YouTube API key is not configured' },
         { status: 500 }
       );
     }
+
+    console.log('Attempting to fetch video details with API key:', apiKey.substring(0, 5) + '...');
 
     // First get video details
     let videoTitle: string;
@@ -99,7 +103,10 @@ export async function GET(request: Request) {
         id: [videoId]
       });
 
+      console.log('Video API Response:', JSON.stringify(videoResponse.data, null, 2));
+
       if (!videoResponse.data.items || videoResponse.data.items.length === 0) {
+        console.error('No video found for ID:', videoId);
         return NextResponse.json(
           { error: 'Video not found or is private. Please make sure the video exists and is public.' },
           { status: 404 }
@@ -108,10 +115,15 @@ export async function GET(request: Request) {
 
       videoTitle = videoResponse.data.items[0].snippet?.title || `Video ${videoId}`;
       console.log('Found video:', videoTitle);
-    } catch (error) {
+    } catch (error: any) {
       console.error('Error fetching video details:', error);
+      console.error('Error response:', error.response?.data);
       return NextResponse.json(
-        { error: 'Failed to fetch video details from YouTube. Please check if the video URL is correct.' },
+        { 
+          error: 'Failed to fetch video details from YouTube.',
+          details: error.message,
+          response: error.response?.data
+        },
         { status: 500 }
       );
     }
@@ -133,10 +145,14 @@ export async function GET(request: Request) {
         { status: 400 }
       );
     }
-  } catch (error) {
+  } catch (error: any) {
     console.error('Error in YouTube API route:', error);
+    console.error('Stack trace:', error.stack);
     return NextResponse.json(
-      { error: error instanceof Error ? error.message : 'Failed to process request' },
+      { 
+        error: error instanceof Error ? error.message : 'Failed to process request',
+        stack: error.stack
+      },
       { status: 500 }
     );
   }
