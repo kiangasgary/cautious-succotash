@@ -1,28 +1,16 @@
 import { NextResponse } from 'next/server';
+import { YoutubeTranscript } from 'youtube-transcript';
 import { google } from 'googleapis';
 
-export async function GET(request: Request) {
+async function getTranscriptFromYoutubeAPI(videoId: string): Promise<string> {
+  const youtube = google.youtube('v3');
+  const apiKey = process.env.YOUTUBE_API_KEY;
+
+  if (!apiKey) {
+    throw new Error('YouTube API key is not configured');
+  }
+
   try {
-    const { searchParams } = new URL(request.url);
-    const videoId = searchParams.get('videoId');
-
-    if (!videoId) {
-      return NextResponse.json(
-        { error: 'Video ID is required' },
-        { status: 400 }
-      );
-    }
-
-    const youtube = google.youtube('v3');
-    const apiKey = process.env.YOUTUBE_API_KEY;
-
-    if (!apiKey) {
-      return NextResponse.json(
-        { error: 'YouTube API key is not configured' },
-        { status: 500 }
-      );
-    }
-
     // First, get the caption tracks
     const captions = await youtube.captions.list({
       key: apiKey,
@@ -31,13 +19,10 @@ export async function GET(request: Request) {
     });
 
     if (!captions.data.items || captions.data.items.length === 0) {
-      return NextResponse.json(
-        { error: 'No captions available for this video' },
-        { status: 404 }
-      );
+      throw new Error('No captions available for this video');
     }
 
-    // Get the first available caption track (usually the auto-generated one)
+    // Get the first available caption track
     const captionId = captions.data.items[0].id;
 
     // Download the caption track
@@ -51,18 +36,64 @@ export async function GET(request: Request) {
       ? captionTrack.data.toString('utf-8')
       : String(captionTrack.data);
 
-    return NextResponse.json({ transcript });
+    return transcript;
   } catch (error: any) {
-    console.error('Error fetching transcript:', error);
-    
-    // Handle specific YouTube API errors
-    if (error.response?.data?.error) {
+    throw new Error(`YouTube API error: ${error.message}`);
+  }
+}
+
+async function getTranscriptUsingThirdParty(videoId: string): Promise<string> {
+  try {
+    const transcriptItems = await YoutubeTranscript.fetchTranscript(videoId);
+    if (!transcriptItems || transcriptItems.length === 0) {
+      throw new Error('No transcript available for this video');
+    }
+    return transcriptItems.map(item => item.text).join(' ');
+  } catch (error: any) {
+    throw new Error(`youtube-transcript error: ${error.message}`);
+  }
+}
+
+export async function GET(request: Request) {
+  try {
+    const { searchParams } = new URL(request.url);
+    const videoId = searchParams.get('videoId');
+
+    if (!videoId) {
       return NextResponse.json(
-        { error: error.response.data.error.message },
-        { status: error.response.status || 500 }
+        { error: 'Video ID is required' },
+        { status: 400 }
       );
     }
 
+    const errors: Error[] = [];
+
+    // Try YouTube API first
+    try {
+      const transcript = await getTranscriptFromYoutubeAPI(videoId);
+      return NextResponse.json({ transcript });
+    } catch (error: any) {
+      console.error('YouTube API failed:', error);
+      errors.push(error);
+    }
+
+    // Fallback to youtube-transcript
+    try {
+      const transcript = await getTranscriptUsingThirdParty(videoId);
+      return NextResponse.json({ transcript });
+    } catch (error: any) {
+      console.error('youtube-transcript failed:', error);
+      errors.push(error);
+    }
+
+    // If both methods fail, return error
+    const errorMessages = errors.map(e => e.message).join('; ');
+    return NextResponse.json(
+      { error: `Failed to fetch transcript: ${errorMessages}` },
+      { status: 500 }
+    );
+  } catch (error: any) {
+    console.error('Error in transcript route:', error);
     return NextResponse.json(
       { error: error.message || 'Failed to fetch transcript' },
       { status: 500 }

@@ -11,7 +11,6 @@ const nextConfig = {
   },
   webpack: (config, { isServer }) => {
     if (!isServer) {
-      // Don't resolve 'fs', 'net', etc. modules on the client side
       config.resolve.fallback = {
         ...config.resolve.fallback,
         net: false,
@@ -20,7 +19,18 @@ const nextConfig = {
         dns: false,
         child_process: false,
         http2: false,
+        events: false,
+        stream: false,
+        util: false,
+        assert: false,
+        url: false,
       };
+    }
+
+    if (isServer) {
+      config.externals.push({
+        'youtube-transcript': 'commonjs youtube-transcript',
+      });
     }
     return config;
   },

@@ -18,8 +18,18 @@ export async function generateSummary(videoId: string): Promise<SummaryResult> {
       videoTitle: title,
       summaryPoints,
     };
-  } catch (error) {
+  } catch (error: any) {
     console.error("Error in generateSummary:", error);
+    
+    // Pass through specific error messages for better user experience
+    if (error.message && (
+      error.message.includes('captions') || 
+      error.message.includes('transcript') ||
+      error.message.includes('unavailable')
+    )) {
+      throw error;
+    }
+    
     throw new Error("Failed to generate summary");
   }
 }

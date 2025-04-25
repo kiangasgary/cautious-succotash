@@ -40,7 +40,7 @@ export function SummaryDisplay() {
         setVideoTitle(result.videoTitle)
       } catch (err) {
         console.error("Error generating summary:", err)
-        setError("Failed to generate summary. The video might not have captions available.")
+        setError(err instanceof Error ? err.message : "Failed to generate summary. The video might not have captions available.")
       } finally {
         setIsLoading(false)
       }
