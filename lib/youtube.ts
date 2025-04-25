@@ -1,3 +1,11 @@
+import { YoutubeTranscript } from 'youtube-transcript';
+
+interface TranscriptItem {
+  text: string;
+  duration: number;
+  offset: number;
+}
+
 export interface VideoDetails {
   title: string;
   transcript: string;
@@ -38,39 +46,40 @@ function extractVideoId(urlOrId: string): string {
 }
 
 async function getTranscriptUsingYoutubeAPI(videoId: string): Promise<string> {
-  const youtube = google.youtube('v3');
-  const apiKey = process.env.YOUTUBE_API_KEY;
-
-  if (!apiKey) {
-    throw new Error('YouTube API key is not configured');
-  }
-
+  console.log('[YouTube API] Attempting to fetch transcript using YouTube API');
+  
   try {
-    // First, get the caption tracks
-    const captions = await youtube.captions.list({
-      key: apiKey,
-      part: ['snippet'],
-      videoId: videoId
-    });
-
-    if (!captions.data.items || captions.data.items.length === 0) {
-      throw new Error('No captions available');
+    // Call our server-side API endpoint that handles YouTube API calls
+    const response = await fetch(`/api/transcript?videoId=${videoId}`);
+    const data = await response.json();
+    
+    if (!response.ok) {
+      throw new Error(data.error || 'Failed to fetch transcript from YouTube API');
+    }
+    
+    if (!data.transcript) {
+      throw new Error('No transcript available');
     }
 
-    // Get the first available caption track (usually the auto-generated one)
-    const captionId = captions.data.items[0].id;
+    console.log('[YouTube API] Successfully fetched transcript');
+    return data.transcript;
+  } catch (error: any) {
+    console.error('[YouTube API] Error fetching transcript:', error);
+    throw error;
+  }
+}
 
-    // Download the caption track
-    const captionTrack = await youtube.captions.download({
-      key: apiKey,
-      id: captionId!
-    });
-
-    // Convert the caption track to plain text
-    const transcript = captionTrack.data.toString();
-    return transcript;
-  } catch (error) {
-    console.error('Error fetching transcript using YouTube API:', error);
+async function getTranscriptUsingThirdParty(videoId: string): Promise<string> {
+  console.log('[Third Party] Attempting to fetch transcript using youtube-transcript');
+  try {
+    const transcriptItems = await YoutubeTranscript.fetchTranscript(videoId) as TranscriptItem[];
+    if (transcriptItems && transcriptItems.length > 0) {
+      console.log('[Third Party] Successfully fetched transcript');
+      return transcriptItems.map((item: TranscriptItem) => item.text).join(' ');
+    }
+    throw new Error('No transcript items found');
+  } catch (error: any) {
+    console.error('[Third Party] Error fetching transcript:', error);
     throw error;
   }
 }
@@ -79,23 +88,28 @@ export async function getVideoTranscript(urlOrId: string): Promise<string> {
   const videoId = extractVideoId(urlOrId);
   console.log('Fetching transcript for video ID:', videoId);
 
-  // Try using youtube-transcript package first
+  // Try all available methods to get the transcript
+  const errors: Error[] = [];
+
+  // Method 1: Try youtube-transcript package
   try {
-    const transcriptItems = await YoutubeTranscript.fetchTranscript(videoId);
-    if (transcriptItems && transcriptItems.length > 0) {
-      return transcriptItems.map(item => item.text).join(' ');
-    }
-  } catch (error) {
+    return await getTranscriptUsingThirdParty(videoId);
+  } catch (error: any) {
     console.log('youtube-transcript failed, trying YouTube API:', error);
+    errors.push(error);
   }
 
-  // If youtube-transcript fails, try using YouTube API
+  // Method 2: Try YouTube API
   try {
     return await getTranscriptUsingYoutubeAPI(videoId);
-  } catch (error) {
-    console.error('Both transcript fetching methods failed:', error);
-    throw new Error('Could not fetch video transcript. The video might have disabled transcripts or requires authentication.');
+  } catch (error: any) {
+    console.log('YouTube API failed:', error);
+    errors.push(error);
   }
+
+  // If all methods fail, throw a comprehensive error
+  const errorMessages = errors.map(e => e.message).join('; ');
+  throw new Error(`Failed to fetch transcript using all available methods. Errors: ${errorMessages}`);
 }
 
 export async function getVideoDetails(urlOrId: string): Promise<VideoDetails> {

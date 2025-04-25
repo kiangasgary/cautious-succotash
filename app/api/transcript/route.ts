@@ -1,75 +1,70 @@
 import { NextResponse } from 'next/server';
-import { YoutubeTranscript } from 'youtube-transcript';
-
-// Function to extract video ID from YouTube URL
-function extractVideoId(urlOrId: string): string {
-  try {
-    // If it's already an ID (11 characters), return it
-    if (urlOrId.length === 11) {
-      return urlOrId;
-    }
-
-    // Try to extract ID from URL
-    const url = new URL(urlOrId);
-    let videoId = '';
-
-    if (url.hostname.includes('youtube.com')) {
-      // Handle youtube.com URLs
-      videoId = url.searchParams.get('v') || '';
-    } else if (url.hostname === 'youtu.be') {
-      // Handle youtu.be URLs
-      videoId = url.pathname.slice(1);
-    }
-
-    if (!videoId) {
-      throw new Error('Could not extract video ID from URL');
-    }
-
-    return videoId;
-  } catch (error) {
-    // If URL parsing fails, assume it's a direct video ID
-    if (urlOrId.length === 11) {
-      return urlOrId;
-    }
-    throw new Error('Invalid YouTube URL or video ID');
-  }
-}
+import { google } from 'googleapis';
 
 export async function GET(request: Request) {
   try {
     const { searchParams } = new URL(request.url);
-    const videoUrl = searchParams.get('videoUrl');
+    const videoId = searchParams.get('videoId');
 
-    if (!videoUrl) {
+    if (!videoId) {
       return NextResponse.json(
-        { error: 'Video URL is required' },
+        { error: 'Video ID is required' },
         { status: 400 }
       );
     }
 
-    const videoId = extractVideoId(videoUrl);
-    console.log('Fetching transcript for video ID:', videoId);
+    const youtube = google.youtube('v3');
+    const apiKey = process.env.YOUTUBE_API_KEY;
 
-    const transcriptItems = await YoutubeTranscript.fetchTranscript(videoId);
-    
-    if (!transcriptItems || transcriptItems.length === 0) {
+    if (!apiKey) {
       return NextResponse.json(
-        { error: 'No transcript available for this video' },
+        { error: 'YouTube API key is not configured' },
+        { status: 500 }
+      );
+    }
+
+    // First, get the caption tracks
+    const captions = await youtube.captions.list({
+      key: apiKey,
+      part: ['snippet'],
+      videoId: videoId
+    });
+
+    if (!captions.data.items || captions.data.items.length === 0) {
+      return NextResponse.json(
+        { error: 'No captions available for this video' },
         { status: 404 }
       );
     }
 
-    const transcript = transcriptItems.map(item => item.text).join(' ');
-    
-    return NextResponse.json({ 
-      transcript,
-      videoId,
-      title: `Video ${videoId}` // You can enhance this with actual video title later
+    // Get the first available caption track (usually the auto-generated one)
+    const captionId = captions.data.items[0].id;
+
+    // Download the caption track
+    const captionTrack = await youtube.captions.download({
+      key: apiKey,
+      id: captionId!
     });
-  } catch (error) {
+
+    // Convert the caption track to plain text
+    const transcript = Buffer.isBuffer(captionTrack.data) 
+      ? captionTrack.data.toString('utf-8')
+      : String(captionTrack.data);
+
+    return NextResponse.json({ transcript });
+  } catch (error: any) {
     console.error('Error fetching transcript:', error);
+    
+    // Handle specific YouTube API errors
+    if (error.response?.data?.error) {
+      return NextResponse.json(
+        { error: error.response.data.error.message },
+        { status: error.response.status || 500 }
+      );
+    }
+
     return NextResponse.json(
-      { error: error instanceof Error ? error.message : 'Failed to fetch transcript' },
+      { error: error.message || 'Failed to fetch transcript' },
       { status: 500 }
     );
   }
